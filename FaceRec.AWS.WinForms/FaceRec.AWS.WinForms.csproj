@@ -157,7 +157,6 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="AWSRekognitionWrapper.cs" />
-    <Compile Include="backup.cs" />
     <Compile Include="FaceDatabase.cs" />
     <Compile Include="FaceRecognizer.cs" />
     <Compile Include="Form1.cs">

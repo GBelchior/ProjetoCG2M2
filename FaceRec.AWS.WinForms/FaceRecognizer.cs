@@ -19,7 +19,7 @@ namespace FaceRec.AWS.WinForms
 
             VideoSource.NewFrame += VideoSource_NewFrame;
 
-            font = new Font("Segoe UI", 14);
+            font = new Font("Segoe UI", 32, FontStyle.Bold);
             okPen = new Pen(Brushes.Green, 5);
             unknownPen = new Pen(Brushes.Red, 5);
         }
@@ -31,12 +31,12 @@ namespace FaceRec.AWS.WinForms
 
         public void Stop()
         {
-            VideoSource.Stop();
+            VideoSource.SignalToStop();
         }
 
         private async void VideoSource_NewFrame(object sender, NewFrameEventArgs eventArgs)
         {
-            if (AWSRekognitionWrapper.IsWaiting) return;
+            if (AWSRekognitionWrapper.IsProcessing) return;
 
             Bitmap newBitmap = new Bitmap(eventArgs.Frame);
             eventArgs.Frame.Dispose();

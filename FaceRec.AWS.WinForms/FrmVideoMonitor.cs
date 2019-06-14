@@ -37,21 +37,25 @@ namespace FaceRec.AWS.WinForms
         {
             if (IsDisposed || !IsHandleCreated) return;
 
-            Invoke(new Action(() =>
+            try
             {
-                Image oldPicture = picMonitor.BackgroundImage;
-                picMonitor.BackgroundImage = e.Frame;
-                oldPicture?.Dispose();
-
-                DateTime now = DateTime.Now;
-                if (!ContainsFocus && e.ContainsUnknownFaces && now > lastBeep.AddSeconds(10))
+                Invoke(new Action(() =>
                 {
-                    Activate();
-                    SystemSounds.Beep.Play();
+                    Image oldPicture = picMonitor.BackgroundImage;
+                    picMonitor.BackgroundImage = e.Frame;
+                    oldPicture?.Dispose();
 
-                    lastBeep = now;
-                }
-            }));
+                    DateTime now = DateTime.Now;
+                    if (!ContainsFocus && e.ContainsUnknownFaces && now > lastBeep.AddSeconds(10))
+                    {
+                        Activate();
+                        SystemSounds.Beep.Play();
+
+                        lastBeep = now;
+                    }
+                }));
+            }
+            catch { }
         }
 
         private void FrmVideoMonitor_FormClosing(object sender, FormClosingEventArgs e)

@@ -49,7 +49,7 @@ namespace FaceRec.AWS.WinForms
             WebCam.Start();
         }
 
-        private void btnAddPerson_Click(object sender, EventArgs e)
+        private async void btnAddPerson_Click(object sender, EventArgs e)
         {
             if (CurrentPicture == null)
             {
@@ -59,8 +59,9 @@ namespace FaceRec.AWS.WinForms
 
             Rectangle[] allFaces = AWSRekognitionWrapper.DetectFaces(CurrentPicture);
 
-            Bitmap beforeRectangles = new Bitmap(CurrentPicture);
             Bitmap facesDetected = new Bitmap(CurrentPicture);
+            Bitmap originalShot = new Bitmap(CurrentPicture);
+
             Pen p = new Pen(Brushes.Green, 5);
             using (Graphics g = Graphics.FromImage(facesDetected))
             {
@@ -84,7 +85,11 @@ namespace FaceRec.AWS.WinForms
 
             if (allFaces.Length == 1)
             {
-                AWSRekognitionWrapper.AddFace(beforeRectangles);
+                Bitmap faceCrop = originalShot.Clone(allFaces[0], originalShot.PixelFormat);
+
+                string faceId = await AWSRekognitionWrapper.AddFace(faceCrop);
+                FaceDatabase.Add(faceId, txtNomPerson.Text);
+
                 Close();
             }
         }
@@ -117,6 +122,8 @@ namespace FaceRec.AWS.WinForms
 
             CurrentPicture = newPicture;
             picPerson.BackgroundImage = CurrentPicture;
+
+            Application.DoEvents();
         }
     }
 }

@@ -1,5 +1,6 @@
 ﻿using Amazon.Rekognition;
 using Amazon.Rekognition.Model;
+using FaceRec.AWS.WinForms.Properties;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -12,16 +13,29 @@ namespace FaceRec.AWS.WinForms
 {
     public static class AWSRekognitionWrapper
     {
-        private static AmazonRekognitionClient CachedClient;
+        private static AmazonRekognitionClient _cachedClient;
+        private static AmazonRekognitionClient CachedClient
+        {
+            get
+            {
+                if (_cachedClient == null)
+                {
+                    _cachedClient = GetClient();
+                }
+
+                return _cachedClient;
+            }
+        }
+
         private static DateTime DatLastRequest;
         private static TimeSpan MinIntervalBetweenRequests;
 
-        public static bool IsWaiting { get; private set; }
+        public static bool IsProcessing { get; private set; }
 
         static AWSRekognitionWrapper()
         {
             DatLastRequest = DateTime.MinValue;
-            MinIntervalBetweenRequests = TimeSpan.FromMilliseconds(Properties.Settings.Default.AmazonRekognitionIntevalBetweenRequests);
+            MinIntervalBetweenRequests = TimeSpan.FromMilliseconds(Settings.Default.AmazonRekognitionIntevalBetweenRequests);
         }
 
         public static Rectangle[] DetectFaces(Bitmap picture)
@@ -45,16 +59,23 @@ namespace FaceRec.AWS.WinForms
             }
         }
 
-        public static string AddFace(Bitmap picture)
+        public static async Task<string> AddFace(Bitmap singleFacePicture)
         {
+            (Rectangle[] recognizedFaces, string[] faceIds, _) = await RecognizeFaces(singleFacePicture);
+            // Rosto já existe na AWS
+            if (recognizedFaces.Length > 0)
+            {
+                return faceIds[0];
+            }
+
             using (MemoryStream ms = new MemoryStream())
             using (AmazonRekognitionClient client = GetClient())
             {
-                picture.Save(ms, ImageFormat.Jpeg);
+                singleFacePicture.Save(ms, ImageFormat.Jpeg);
 
                 IndexFacesResponse response = client.IndexFaces(new IndexFacesRequest
                 {
-                    CollectionId = Properties.Settings.Default.AmazonRekognitionCollectionID,
+                    CollectionId = Settings.Default.AmazonRekognitionCollectionID,
                     Image = new Amazon.Rekognition.Model.Image
                     {
                         Bytes = ms
@@ -70,36 +91,17 @@ namespace FaceRec.AWS.WinForms
             }
         }
 
-        // TODO:
-        // You can also call the DetectFaces operation and use the bounding boxes in the response to make face crops, 
-        // which then you can pass in to the SearchFacesByImage operation.
-        // https://docs.aws.amazon.com/rekognition/latest/dg/API_SearchFacesByImage.html
-        // REVISAR ESSE MÉTODO
-        // O SEARCHFACES RETORNA UM VALOR PARA TODOS OS ROSTOS DA COLEÇÃO
-        // FAZER O SEGUINTE:
-        // MANDAR UM ROSTO POR VEZ PRO SERVIÇO
-        // COLOCA O FACEMATCH = 80
-        // AI SE NAO VIER RESULTADO MANDA BALA
-        public static async Task<(Rectangle[] recognizedFaces, string[] faceIds, Rectangle[] unknownFaces)> RecognizeFaces(Bitmap picture)
+        private static async Task<SearchFacesByImageResponse> RecognizeSingleFace(Bitmap singleFacePicture)
         {
-            IsWaiting = true;
-            await Task.Delay(GetSleepIntervalMillis());
-
-            if (CachedClient == null)
-            {
-                CachedClient = GetClient();
-            }
-
             using (MemoryStream ms = new MemoryStream())
             {
-                picture.Save(ms, ImageFormat.Jpeg);
-                SearchFacesByImageResponse response = null;
+                singleFacePicture.Save(ms, ImageFormat.Jpeg);
                 try
                 {
-                    response = await CachedClient.SearchFacesByImageAsync(new SearchFacesByImageRequest
+                    return await CachedClient.SearchFacesByImageAsync(new SearchFacesByImageRequest
                     {
-                        CollectionId = Properties.Settings.Default.AmazonRekognitionCollectionID,
-                        FaceMatchThreshold = 0,
+                        CollectionId = Settings.Default.AmazonRekognitionCollectionID,
+                        FaceMatchThreshold = 80,
                         Image = new Amazon.Rekognition.Model.Image
                         {
                             Bytes = ms
@@ -109,39 +111,73 @@ namespace FaceRec.AWS.WinForms
                 catch (InvalidParameterException)
                 {
                     // Foto sem rosto
-                    IsWaiting = false;
-                    return (new Rectangle[0], new string[0], new Rectangle[0]);
+                    return null;
+                }
+            }
+        }
+
+        public static async Task<(Rectangle[] recognizedFaces, string[] faceIds, Rectangle[] unknownFaces)> RecognizeFaces(Bitmap picture)
+        {
+            IsProcessing = true;
+
+            Rectangle[] allFacesInFrame = DetectFaces(picture);
+
+            List<Rectangle> recognizedFaces = new List<Rectangle>();
+            List<string> faceIds = new List<string>();
+            List<Rectangle> unknownFaces = new List<Rectangle>();
+
+            foreach (Rectangle faceRect in allFacesInFrame)
+            {
+                Bitmap faceCropPicture = picture.Clone(faceRect, picture.PixelFormat);
+                SearchFacesByImageResponse response = await RecognizeSingleFace(faceCropPicture);
+
+                // Não achei nenhum rosto nessa foto
+                if (response == null || response.FaceMatches.Count == 0)
+                {
+                    unknownFaces.Add(faceRect);
+                }
+                else
+                {
+                    recognizedFaces.Add(faceRect);
+                    faceIds.Add(response.FaceMatches.First().Face.FaceId);
                 }
 
-                List<FaceMatch> recognizedFaces = response.FaceMatches.Where(f => f.Similarity >= 80).ToList();
-                List<FaceMatch> unknownFaces = response.FaceMatches.Where(f => f.Similarity < 80).ToList();
-
-                Rectangle[] recognizedFacePositions = recognizedFaces.Select(f => f.Face.BoundingBox.ToRectangle(picture.Width, picture.Height)).ToArray();
-                string[] faceIds = recognizedFaces.Select(f => f.Face.FaceId).ToArray();
-                Rectangle[] unknownFacePositions = unknownFaces.Select(f => f.Face.BoundingBox.ToRectangle(picture.Width, picture.Height)).ToArray();
-
-                IsWaiting = false;
-                return (recognizedFacePositions, faceIds, unknownFacePositions);
+                await Task.Delay(GetSleepIntervalMillis());
             }
+
+            IsProcessing = false;
+            return (recognizedFaces.ToArray(), faceIds.ToArray(), unknownFaces.ToArray());
         }
 
         private static Rectangle ToRectangle(this BoundingBox boundingBox, int imgWidth, int imgHeight)
         {
-            return new Rectangle
+            Rectangle rect = new Rectangle
             (
                 Convert.ToInt32(Math.Round(imgWidth * boundingBox.Left)),
                 Convert.ToInt32(Math.Round(imgHeight * boundingBox.Top)),
                 Convert.ToInt32(Math.Round(imgWidth * boundingBox.Width)),
                 Convert.ToInt32(Math.Round(imgHeight * boundingBox.Height))
             );
+
+            if (rect.X + rect.Width > imgWidth)
+            {
+                rect.Width = imgWidth - rect.X;
+            }
+
+            if (rect.Y + rect.Height > imgHeight)
+            {
+                rect.Height = imgHeight - rect.Y;
+            }
+
+            return rect;
         }
 
         private static AmazonRekognitionClient GetClient()
         {
             return new AmazonRekognitionClient
             (
-                Properties.Settings.Default.AmazonRekognitionAccessKeyID,
-                Properties.Settings.Default.AmazonRekognitionSecretAccessKey,
+                Settings.Default.AmazonRekognitionAccessKeyID,
+                Settings.Default.AmazonRekognitionSecretAccessKey,
                 Amazon.RegionEndpoint.USEast2
             );
         }
